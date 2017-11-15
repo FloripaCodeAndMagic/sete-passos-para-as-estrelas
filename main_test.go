@@ -12,8 +12,8 @@ func TestBuildQuery(t *testing.T) {
 	v := url.Values{}
 	v.Set("action", "query")
 	v.Add("titles", "Joseph Opala")
-	v.Add("prop", "revisions")
-	v.Add("rvprop", "content")
+	v.Add("prop", "links")
+	v.Add("pllimit", "max")
 	v.Add("format", "json")
 
 	expected := fmt.Sprintf("/w/api.php?%s", v.Encode())
