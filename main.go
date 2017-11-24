@@ -5,23 +5,40 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
 )
 
 func main() {
+	fetcher := WikiFetcher{}
+	//page, _ := fetcher.FetchPage("https://pt.wikipedia.org", []string{"Ronaldo"})
+
+	result, _ := getPathToPage(&fetcher, "https://pt.wikipedia.org", "Ronaldo", "Fausto Silva")
+	fmt.Println(result)
 }
 
-func buildQuery(pageName string) string {
-	v := url.Values{}
-	v.Set("action", "query")
-	v.Add("titles", pageName)
-	v.Add("prop", "links")
-	v.Add("pllimit", "max")
-	v.Add("format", "json")
+func buildQueries(pageNames []string) []string {
+	queries := []string{}
 
-	return fmt.Sprintf("/w/api.php?%s", v.Encode())
+	for i := 0; i < int(math.Ceil(float64(len(pageNames))/50)); i++ {
+		sliceLimit := 50 * (i + 1)
+		if len(pageNames) < sliceLimit {
+			sliceLimit = len(pageNames)
+		}
+
+		v := url.Values{}
+		v.Set("action", "query")
+		v.Add("titles", strings.Join(pageNames[50*i:sliceLimit], "|"))
+		v.Add("prop", "links")
+		v.Add("pllimit", "max")
+		v.Add("format", "json")
+
+		queries = append(queries, fmt.Sprintf("/w/api.php?%s", v.Encode()))
+	}
+
+	return queries
 }
 
 type Link struct {
@@ -65,7 +82,7 @@ type WikiResponse struct {
 }
 
 type Fetcher interface {
-	FetchPage(string, string) ([]string, error)
+	FetchPage(string, []string) (map[string][]string, error)
 }
 
 type WikiFetcher struct{}
@@ -83,55 +100,72 @@ func (wr *WikiResponse) articles() []string {
 	return wr.Query.articles()
 }
 
-func (fetcher *WikiFetcher) FetchPage(wikiURL string, pageName string) ([]string, error) {
-	query := buildQuery(pageName)
-	url := fmt.Sprintf("%s%s", wikiURL, query)
-	res, err := http.Get(url)
-	defer res.Body.Close()
-	if err != nil {
-		return nil, err
-	}
+func (fetcher *WikiFetcher) FetchPage(wikiURL string, pageNames []string) (map[string][]string, error) {
+	queries := buildQueries(pageNames)
 
-	body, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
+	articles := map[string][]string{}
 
-	wikiResponse := WikiResponse{}
-	err = json.Unmarshal(body, &wikiResponse)
-	if err != nil {
-		return nil, err
-	}
+	for _, query := range queries {
+		fmt.Println(query)
+		url := fmt.Sprintf("%s%s", wikiURL, query)
+		res, err := http.Get(url)
+		defer res.Body.Close()
+		if err != nil {
+			return nil, err
+		}
 
-	articles := wikiResponse.articles()
+		body, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		wikiResponse := WikiResponse{}
+		err = json.Unmarshal(body, &wikiResponse)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, page := range wikiResponse.Query.Pages {
+			links := []string{}
+			for _, link := range page.Links {
+				links = append(links, link.Title)
+			}
+
+			articles[page.Title] = links
+		}
+	}
 
 	return articles, nil
 }
 
 func getPathToPage(fetcher Fetcher, wikiURL string, startingPage string, endingPage string) ([]string, error) {
-	rootPage := Page{startingPage, nil, nil}
+	pageMap := map[string]*Page{
+		startingPage: &Page{startingPage, nil, nil},
+	}
 
 	// Space, the final frontier
-	frontier := []Page{rootPage}
+	frontier := []string{startingPage}
 
 	for len(frontier) > 0 {
-		children := []Page{}
+		nextFrontier := []string{}
 
-		for i, page := range frontier {
-			childrenTitles, _ := fetcher.FetchPage(wikiURL, page.Title)
+		linkMap, _ := fetcher.FetchPage(wikiURL, frontier)
 
-			for _, childTitle := range childrenTitles {
-				childPage := Page{Title: childTitle, Parent: &frontier[i]}
+		for parentTitle, childLinks := range linkMap {
+			fmt.Println(parentTitle, len(childLinks))
+			for _, childLink := range childLinks {
+				childPage := Page{Title: childLink, Parent: pageMap[parentTitle]}
+				pageMap[childLink] = &childPage
 
-				if strings.ToLower(childTitle) == strings.ToLower(endingPage) {
+				if strings.ToLower(childLink) == strings.ToLower(endingPage) {
 					return childPage.GetHierarchy(), nil
 				}
 
-				children = append(children, childPage)
+				nextFrontier = append(nextFrontier, childLink)
 			}
 		}
 
-		frontier = children
+		frontier = nextFrontier
 	}
 
 	return nil, errors.New("No more references could be found.")
