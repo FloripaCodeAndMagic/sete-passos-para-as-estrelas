@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 func main() {
@@ -27,8 +29,9 @@ type Link struct {
 }
 
 type Page struct {
-	Title string `json:"title"`
-	Links []Link `json:"links"`
+	Title  string `json:"title"`
+	Links  []Link `json:"links"`
+	Parent *Page
 }
 
 func (p *Page) articles() []string {
@@ -41,6 +44,18 @@ func (p *Page) articles() []string {
 	return articles
 }
 
+func (p *Page) GetHierarchy() []string {
+	path := []string{}
+	currentPage := p
+
+	for currentPage != nil {
+		path = append(path, currentPage.Title)
+		currentPage = currentPage.Parent
+	}
+
+	return path
+}
+
 type WikiQuery struct {
 	Pages map[string]Page `json:"pages"`
 }
@@ -48,6 +63,12 @@ type WikiQuery struct {
 type WikiResponse struct {
 	Query WikiQuery `json:"query"`
 }
+
+type Fetcher interface {
+	FetchPage(string, string) ([]string, error)
+}
+
+type WikiFetcher struct{}
 
 func (wq *WikiQuery) articles() []string {
 	articles := []string{}
@@ -62,9 +83,9 @@ func (wr *WikiResponse) articles() []string {
 	return wr.Query.articles()
 }
 
-func fetchPage(wikiUrl string, pageName string) ([]string, error) {
+func (fetcher *WikiFetcher) FetchPage(wikiURL string, pageName string) ([]string, error) {
 	query := buildQuery(pageName)
-	url := fmt.Sprintf("%s%s", wikiUrl, query)
+	url := fmt.Sprintf("%s%s", wikiURL, query)
 	res, err := http.Get(url)
 	defer res.Body.Close()
 	if err != nil {
@@ -85,4 +106,33 @@ func fetchPage(wikiUrl string, pageName string) ([]string, error) {
 	articles := wikiResponse.articles()
 
 	return articles, nil
+}
+
+func getPathToPage(fetcher Fetcher, wikiURL string, startingPage string, endingPage string) ([]string, error) {
+	rootPage := Page{startingPage, nil, nil}
+
+	// Space, the final frontier
+	frontier := []Page{rootPage}
+
+	for len(frontier) > 0 {
+		children := []Page{}
+
+		for i, page := range frontier {
+			childrenTitles, _ := fetcher.FetchPage(wikiURL, page.Title)
+
+			for _, childTitle := range childrenTitles {
+				childPage := Page{Title: childTitle, Parent: &frontier[i]}
+
+				if strings.ToLower(childTitle) == strings.ToLower(endingPage) {
+					return childPage.GetHierarchy(), nil
+				}
+
+				children = append(children, childPage)
+			}
+		}
+
+		frontier = children
+	}
+
+	return nil, errors.New("No more references could be found.")
 }
