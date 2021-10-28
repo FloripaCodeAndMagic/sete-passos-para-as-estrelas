@@ -69,7 +69,8 @@ func TestFetchPage(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(testHandler))
 	defer ts.Close()
 
-	articles, err := fetchPage(ts.URL, "Joseph Opala")
+	fetcher := WikiFetcher{}
+	articles, err := fetcher.FetchPage(ts.URL, "Joseph Opala")
 	if err != nil {
 		t.Errorf("Unexpected fetch error")
 	}
@@ -102,7 +103,8 @@ func TestFetchPageNoTitles(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(testHandler))
 	defer ts.Close()
 
-	articles, err := fetchPage(ts.URL, "Joseph Opala")
+	fetcher := WikiFetcher{}
+	articles, err := fetcher.FetchPage(ts.URL, "Joseph Opala")
 	if err != nil {
 		t.Errorf("Unexpected fetch error")
 	}
@@ -110,5 +112,55 @@ func TestFetchPageNoTitles(t *testing.T) {
 	expected := []string{}
 	if !reflect.DeepEqual(articles, expected) {
 		t.Errorf("Expected %v, got %v", expected, articles)
+	}
+}
+
+type MockFetcher struct {
+	returnIndex int
+	returnMap   map[string][]string
+}
+
+func (m *MockFetcher) FetchPage(_ string, pageName string) ([]string, error) {
+	return m.returnMap[pageName], nil
+}
+
+func (m *MockFetcher) SetReturnMap(returnMap map[string][]string) {
+	m.returnMap = returnMap
+}
+
+func TestPageHierarchy(t *testing.T) {
+	god := Page{Title: "God", Parent: nil}
+	grandfather := Page{Title: "Grandfather", Parent: &god}
+	father := Page{Title: "Father", Parent: &grandfather}
+	son := Page{Title: "Son", Parent: &father}
+
+	hierarchy := son.GetHierarchy()
+	expected := []string{"Son", "Father", "Grandfather", "God"}
+
+	if !reflect.DeepEqual(hierarchy, expected) {
+		t.Errorf("Expected %v, got %v", expected, hierarchy)
+	}
+}
+
+func TestGetPathToPage(t *testing.T) {
+	mockFetcher := new(MockFetcher)
+	mockFetcher.SetReturnMap(map[string][]string{
+		"Joseph Opala": []string{"Batman", "Robin"},
+		"Batman":       []string{"Belt", "Ferrari"},
+		"Robin":        []string{"Joker"},
+		"Belt":         []string{"Metal"},
+		"Ferrari":      []string{"Lamborghini", "Bitcoin"},
+	})
+
+	path, err := getPathToPage(mockFetcher, "BatPedia.org", "Joseph Opala", "Bitcoin")
+
+	if err != nil {
+		t.Errorf("Unexpected fetch error")
+	}
+
+	expected := []string{"Bitcoin", "Ferrari", "Batman", "Joseph Opala"}
+
+	if !reflect.DeepEqual(path, expected) {
+		t.Errorf("Expected %v, got %v", expected, path)
 	}
 }
